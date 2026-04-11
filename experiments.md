@@ -2,13 +2,15 @@
 
 ---
 
-## Q2.1 – Baseline vs. Fine-tuned Transformer (Sentiment & Sarcasm)
+## Q2.1 – Baseline/PTLM Gap (Sentiment & Sarcasm)
 
-This section compares classical machine learning approaches against a fine-tuned transformer model to understand the performance gap introduced by pre-training on large corpora.
+This section compares three classical machine learning baselines against a fine-tuned transformer (Pre-trained Language Model) to quantify the performance gap introduced by contextual pre-training.
 
-The classical baseline uses TF-IDF vectorisation combined with either Logistic Regression or an SVM classifier. TF-IDF captures term frequency signals but is entirely bag-of-words and cannot model word order, context, or dialectal nuance. As a result, it struggles especially with sarcasm, where surface-level word frequency is often insufficient to determine the intended meaning.
+The three classical baselines are Logistic Regression (LR), Support Vector Machine (SVM), and Multinomial Naive Bayes (MNB), all using TF-IDF features. TF-IDF captures term frequency signals but is fundamentally bag-of-words — it cannot model word order, contextual tone, or pragmatic cues. This is a significant limitation for sarcasm detection, where surface-level word frequency is rarely sufficient to determine intended meaning. For instance, a sentence like "Great service, waited only 2 hours" contains overtly positive words that a TF-IDF model would likely misclassify as positive sentiment.
 
-RoBERTa-base, by contrast, is pre-trained on billions of tokens and has encoded deep contextual representations. When fine-tuned on the BESSTIE data, it consistently outperforms the classical baseline on both sentiment and sarcasm tasks. The gap is more pronounced for sarcasm (~0.20 Macro-F1 difference) than sentiment (~0.18), which is expected — sentiment carries stronger lexical signals, while sarcasm requires understanding pragmatic and contextual cues that only a contextualised model can capture.
+RoBERTa-base is chosen as the PTLM because it is an optimised version of BERT with key training improvements: it uses dynamic masking (different tokens masked each epoch for better generalisation), removes the Next Sentence Prediction (NSP) objective which was found to be unhelpful, and is trained on roughly 160GB of data — ten times more than BERT. These improvements make RoBERTa a more robust contextual encoder, particularly for tasks requiring nuanced language understanding such as sarcasm detection.
+
+Classical models perform reasonably well on sentiment classification due to clear lexical cues (e.g., "excellent", "terrible"), but struggle substantially with sarcasm — particularly the detection of sarcastic positivity — because they lack any mechanism to model polarity flips or ironic intent. RoBERTa consistently outperforms all three baselines across both tasks. The performance gap is especially pronounced for sarcasm F1 and positive sarcasm recall, confirming that contextual embeddings are essential for this task.
 
 Two training runs are reported per setup to verify stability and rule out random initialisation effects.
 
@@ -33,21 +35,25 @@ This analysis motivates the need for variety-aware or multilingual training stra
 
 This section uses Low-Rank Adaptation (LoRA) to fine-tune lightweight adapters on top of a frozen Qwen2.5-1.5B base model, one adapter per English variety, evaluated on the sarcasm task.
 
-LoRA works by injecting trainable low-rank matrices into specific transformer layers while keeping the base model weights frozen. This drastically reduces the number of trainable parameters, making it feasible to train variety-specific adapters without requiring full model fine-tuning for each dialect.
+LoRA works by injecting trainable low-rank matrices into specific transformer layers while keeping the base model weights frozen. This drastically reduces the number of trainable parameters, making it feasible to train variety-specific adapters without requiring full model fine-tuning for each dialect. The practical advantage at deployment is also significant: swapping adapters requires loading only a few MB of additional weights rather than reloading an entirely separate model, allowing the system to serve multiple variety-specific models efficiently from a single base.
 
-Each adapter (UK, IN, AU) is trained on its respective variety's training set and then evaluated on all three test sets. Results show that each adapter performs best on its native variety, confirming that variety-specific adaptation is beneficial. The AU Adapter achieves the best within-variety performance (Macro-F1 ~0.80), while cross-variety transfer degrades noticeably — particularly from IN to the inner-circle varieties.
+Given the class imbalance in the sarcasm task, standard cross-entropy loss is not ideal for LoRA training. Weighted Cross-Entropy is used to assign a higher penalty to misclassifying sarcastic instances, forcing the model to attend to the minority class. For cases where the model still struggles with hard-to-classify sarcastic examples (e.g., subtle irony without strong lexical cues), Focal Loss is an alternative — it dynamically down-weights easy negatives and focuses training on difficult examples. In this setup, Weighted Cross-Entropy is applied to the sarcasm head during LoRA fine-tuning.
+
+Each adapter (UK, IN, AU) is trained on its respective variety's training set and evaluated on all three test sets. Results show that each adapter performs best on its native variety, confirming that variety-specific adaptation is beneficial. The AU Adapter achieves the best within-variety performance (Macro-F1 ~0.80), while cross-variety transfer degrades noticeably — particularly from IN to the inner-circle varieties.
 
 Two runs per adapter are conducted to account for stochastic variation in LoRA training. The use of Qwen2.5-1.5B keeps the experiment within the 1B–3B parameter constraint while providing a reasonably strong base.
 
 ---
 
-## Q3 – Per-Class Evaluation (Sarcasm)
+## Q3 – Per-Class Evaluation & Metric Justification
 
-This section provides a detailed breakdown of model performance at the class level to detect failure modes that aggregate metrics can obscure.
+This section provides a detailed breakdown of model performance at the class level to detect failure modes that aggregate metrics can obscure, and justifies the choice of evaluation metrics for both tasks.
 
-Macro-F1 is used as the primary metric because the sarcasm dataset is class-imbalanced — "Not Sarcastic" instances far outnumber "Sarcastic" ones in real-world data. A naive classifier that always predicts "Not Sarcastic" could achieve high accuracy but near-zero F1 on the sarcastic class; Macro-F1 penalises such behaviour by averaging equally across both classes.
+**Metrics for Sarcasm Detection.** Macro-F1 is used as the primary metric because the sarcasm dataset is class-imbalanced — "Not Sarcastic" instances far outnumber "Sarcastic" ones in real-world data. Accuracy alone is highly misleading here: a model that always predicts "Not Sarcastic" can achieve 90%+ accuracy while being entirely useless. Macro-F1 averages F1 equally across both classes, penalising models that simply predict the majority class. Beyond Macro-F1, per-class Precision and Recall are reported separately. Recall for the sarcastic class is particularly important: missing sarcasm (a false negative) is generally more costly than a false alarm, especially in sentiment-aware or content moderation applications. Confusion matrices are included to show asymmetric error patterns — specifically, how often subtle or culturally-specific sarcasm is misidentified as non-sarcastic.
 
-Per-class results show that both RoBERTa-base and the Qwen2.5-1.5B AU LoRA Adapter maintain reasonable precision and recall on the minority "Sarcastic" class, with the LoRA adapter slightly outperforming RoBERTa. Confusion matrices for the best models are included to show specific patterns of misclassification, particularly cases where subtle or culturally-specific sarcasm is misidentified as non-sarcastic.
+**Metrics for Sentiment Classification.** For the binary POS/NEG sentiment task, Macro-F1 is again the primary metric since datasets may not be perfectly balanced across varieties. Per-class F1 and Recall for the Negative class are also tracked, as missed negative sentiment (false negatives on NEG) is typically more consequential than false positives in downstream applications. Accuracy is reported for completeness but not used for model selection.
+
+Per-class results show that both RoBERTa-base and the Qwen2.5-1.5B AU LoRA Adapter maintain reasonable precision and recall on the minority "Sarcastic" class, with the LoRA adapter slightly outperforming RoBERTa. The key finding is that no model is simply predicting the majority class — per-class breakdowns confirm that sarcasm recall, while lower than non-sarcasm recall, remains above a meaningful threshold across all setups.
 
 ---
 
