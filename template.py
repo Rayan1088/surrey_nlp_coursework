@@ -5,8 +5,14 @@ list_of_files = [
 
     f"notebooks/01_EDA.ipynb",
     f"notebooks/02_data_preprocessing.ipynb",
-    f"notebooks/model_training.ipynb",
-    f"notebooks/model_evaluation.ipynb",
+    f"notebooks/03_classical_baseline.ipynb",
+    f"notebooks/04_RoBERTa_base.ipynb",
+
+
+
+
+    
+    f"notebooks/04_RoBERTa_base.ipynb",
     f"models_checkpoints/",
     f"artifacts/",
     f"src/__init__.py",
